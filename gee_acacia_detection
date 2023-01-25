@@ -1,0 +1,200 @@
+//*****************************************************************************************
+//Cloud mask
+//*****************************************************************************************
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask).divide(10000)
+  .copyProperties(image,["system:time_start"]);
+}
+
+//*****************************************************************************************
+//Create spectral indixes
+//*****************************************************************************************
+function addIndices(image) {
+  var RG = image.normalizedDifference(['B4', 'B3']).rename('R_G');
+  var GB = image.normalizedDifference(['B3', 'B2']).rename('G_B');
+  var BR = image.normalizedDifference(['B2', 'B4']).rename('B_R');
+  var NDVI = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  var NIR_G = image.normalizedDifference(['B8', 'B3']).rename('NIR_G');
+  var NIR_B = image.normalizedDifference(['B8', 'B2']).rename('NIR_B');
+  return image.addBands(RG).addBands(GB).addBands(BR).addBands(NDVI).addBands(NIR_G).addBands(NIR_B).toFloat();
+}
+
+//*****************************************************************************************
+// Graphical identification of optimal time to distinguish Acacia dealbata
+//*****************************************************************************************
+
+var dataset = s2
+.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .filter(ee.Filter.date('2018-01-01', '2018-12-30'))//'2017-04-01', '2018-08-30'
+  .filter(ee.Filter.bounds(boundary))
+  .map(maskS2clouds)
+  .map(addIndices)
+  .select('B2','B3','B4','B8','R_G','G_B','B_R','NDVI','NIR_G','NIR_B');
+
+//Selection of A. dealbata presences in the field data
+var acacia_gt= ground_truth.filter(ee.Filter.eq('Tipo', 1))
+
+var chart = ui.Chart.image.series({
+  imageCollection: dataset.select('R_G','B_R','G_B','NIR_G','NDVI','NIR_B'),//.select('R_G','B_R','G_B','NIR_G','NDVI','NIR_B'),
+  region: acacia_gt,
+  reducer: ee.Reducer.mean(),
+  scale: 20
+}).setOptions({
+      lineWidth: 1,
+      colors:['green','blue','red','yellow','purple','orange','black','grey','darkblue','darkgreen'], //'#6F9654'
+      title: 'Serie temporal',
+      interpolateNulls: true, //probar también con false
+      vAxis: {title: ''},
+      hAxis: {title: 'Fecha', format: 'YYYY-MMM'},
+      curveType: 'function'
+    })
+print(chart);
+
+
+//*****************************************************************************************
+// Compute pre flowering, blooming and post flowering collections (example for year 2018)
+//*****************************************************************************************
+
+//Pre flowering
+var preflowering = s2
+.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .filter(ee.Filter.date('2018-01-01', '2018-01-30'))
+  .filter(ee.Filter.bounds(boundary))
+  .map(maskS2clouds)
+  .map(addIndices)
+  .select('B2','B3','B4','B8','R_G','G_B','B_R','NDVI','NIR_G','NIR_B');
+var composite_preflowering = preflowering.median().clip(boundary); 
+print('Composite_preflowering',composite_preflowering);
+
+//Blooming 
+var blooming = s2
+.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .filter(ee.Filter.date('2018-03-01', '2018-03-30'))
+  .filter(ee.Filter.bounds(boundary))
+  .map(maskS2clouds)
+  .map(addIndices)
+  .select('B2','B3','B4','B8','R_G','G_B','B_R','NDVI','NIR_G','NIR_B');
+var composite_blooming = blooming.median().clip(boundary); 
+print('Composite_blooming',composite_blooming);
+
+//Post flowering
+var postflowering = s2
+.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .filter(ee.Filter.date('2018-05-01', '2018-05-30'))
+  .filter(ee.Filter.bounds(boundary))
+  .map(maskS2clouds)
+  .map(addIndices)
+  .select('B2','B3','B4','B8','R_G','G_B','B_R','NDVI','NIR_G','NIR_B');
+var composite_postflowering = postflowering.median().clip(boundary); 
+print('Composite_postflowering',composite_postflowering);
+
+//Combine bands from the collections  
+var composite = composite_blooming.addBands([composite_preflowering]).addBands([composite_postflowering]);
+print('composite',composite)
+
+  
+//**************************************************************************
+//Compute spectral differences between periods (pre flowering, blooming and post flowering)
+//**************************************************************************
+
+//  Blooming - preflowering
+var pre_B2= composite.select('B2').subtract(composite.select('B2_1')).rename('pre_B2');
+var pre_B3= composite.select('B3').subtract(composite.select('B3_1')).rename('pre_B3');
+var pre_B4= composite.select('B4').subtract(composite.select('B4_1')).rename('pre_B4');
+var pre_B8= composite.select('B8').subtract(composite.select('B8_1')).rename('pre_B8');
+var pre_R_G= composite.select('R_G').subtract(composite.select('R_G_1')).rename('pre_R_G');
+var pre_G_B= composite.select('G_B').subtract(composite.select('G_B_1')).rename('pre_G_B');
+var pre_B_R= composite.select('B_R').subtract(composite.select('B_R_1')).rename('pre_B_R');
+var pre_NDVI= composite.select('NDVI').subtract(composite.select('NDVI_1')).rename('pre_NDVI');
+var pre_NIR_G= composite.select('NIR_G').subtract(composite.select('NIR_G_1')).rename('pre_NIR_G');
+var pre_NIR_B= composite.select('NIR_B').subtract(composite.select('NIR_B_1')).rename('pre_NIR_B');
+
+// Blooming - post flowering
+var B2_post= composite.select('B2').subtract(composite.select('B2_2')).rename('B2_post');
+var B3_post= composite.select('B3').subtract(composite.select('B3_2')).rename('B3_post');
+var B4_post= composite.select('B4').subtract(composite.select('B4_2')).rename('B4_post');
+var B8_post= composite.select('B8').subtract(composite.select('B8_2')).rename('B8_post');
+var R_G_post= composite.select('R_G').subtract(composite.select('R_G_2')).rename('R_G_post');
+var G_B_post= composite.select('G_B').subtract(composite.select('G_B_2')).rename('G_B_post');
+var B_R_post= composite.select('B_R').subtract(composite.select('B_R_2')).rename('B_R_post');
+var NDVI_post= composite.select('NDVI').subtract(composite.select('NDVI_2')).rename('NDVI_post');
+var NIR_G_post= composite.select('NIR_G').subtract(composite.select('NIR_G_2')).rename('NIR_G_post');
+var NIR_B_post= composite.select('NIR_B').subtract(composite.select('NIR_B_2')).rename('NIR_B_post');
+
+//Add new bands to the collection 
+var composite =composite.addBands(pre_B2).addBands(pre_B3).addBands(pre_B4).addBands(pre_B8)
+              .addBands(pre_R_G).addBands(pre_G_B).addBands(pre_B_R).addBands(pre_NDVI).addBands(pre_NIR_G).addBands(pre_NIR_B)
+              .addBands(B2_post).addBands(B3_post).addBands(B4_post).addBands(B8_post).addBands(NDVI_post)
+              .addBands(NIR_G_post).addBands(NIR_B_post).addBands(R_G_post).addBands(G_B_post).addBands(B_R_post)
+print("composite_new",composite);
+
+
+//Subsec of metrics when needed (after computing random forest feature importance
+//var composite = composite.select("pre_NDVI","pre_B_R","pre_R_G","B_R_post","R_G_post","B8");
+
+//**************************************************************************
+//Create training and validation samples
+//**************************************************************************
+
+var ground_truth = ground_truth.randomColumn()
+print('ground_truth', ground_truth)
+var trainingGcp = ground_truth.filter(ee.Filter.lt('random', 0.75));
+var validationGcp = ground_truth.filter(ee.Filter.gte('random', 0.25));
+
+// Extrac information for training field data
+var training = composite.reduceRegions({
+  collection: trainingGcp,
+  reducer: ee.Reducer.median(),
+  scale: 10,
+  tileScale: 4, 
+});
+print('training',ee.Feature(training.first()))
+
+var test = composite.reduceRegions({
+  collection: validationGcp,
+  reducer: ee.Reducer.median(),//ee.Reducer.median()
+  scale: 10,
+  tileScale: 4,
+});
+print('test',ee.Feature(test.first()))
+
+//************************************************************************** 
+// Training random forest classifier for Acacia detection
+//************************************************************************** 
+
+var classifier = ee.Classifier.smileRandomForest(500,2) //ntrees,mtry
+.train({
+  features: training,  
+  classProperty: 'Tipo',
+  inputProperties: composite.bandNames()});
+
+// Clasify the image.
+var classified = composite.classify(classifier);
+var classified_masked = classified.clip(boundary).updateMask(classified.eq(1))
+Map.addLayer(classified_masked, {min: 0, max: 1,palette:['green']}, 'classified');
+
+//************************************************************************** 
+// Compute Random Forest feature importance
+//************************************************************************** 
+
+print(classifier.explain())
+var importance = ee.Dictionary(classifier.explain().get('importance'))
+var sum = importance.values().reduce(ee.Reducer.sum())
+var relativeImportance = importance.map(function(key, val) {
+   return (ee.Number(val).multiply(100)).divide(sum)  
+  })
+print("RF_importance", relativeImportance)
+
+//************************************************************************** 
+// Accuracy Assessment
+//************************************************************************** 
+
+var testConfusionMatrix = test.classify(classifier).errorMatrix('Tipo', 'classification');
+print('Confusion Matrix', testConfusionMatrix);
+print('Test Accuracy', testConfusionMatrix.accuracy());
+print('Kappa',testConfusionMatrix.kappa())
